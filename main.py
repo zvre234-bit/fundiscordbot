@@ -17,8 +17,8 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 # ==========================================
 # JUMPSQUAD INITIALIZATION
 # ==========================================
-# Create 4 additional bot instances for the squad
-squad_bots = [commands.Bot(command_prefix='!', intents=intents, help_command=None) for _ in range(4)]
+# Create 10 additional bot instances for the massive squad
+squad_bots = [commands.Bot(command_prefix='!', intents=intents, help_command=None) for _ in range(10)]
 
 # ==========================================
 # DATABASES (Memory)
@@ -375,7 +375,7 @@ async def jumpsquad(ctx, url: str):
         return await ctx.send("❌ You need to be in a voice channel first!")
     
     channel = ctx.author.voice.channel
-    msg = await ctx.send("🚨 **DEPLOYING THE JUMPSQUAD** 🚨\n`Extracting audio...`")
+    msg = await ctx.send("🚨 **DEPLOYING THE JUMPSQUAD (11 BOTS MAX)** 🚨\n`Extracting audio...`")
 
     # 1. Extract the direct audio stream URL just ONCE for all bots
     try:
@@ -387,7 +387,7 @@ async def jumpsquad(ctx, url: str):
     except Exception as e:
         return await msg.edit(content=f"❌ Error extracting audio: {e}")
 
-    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying squad to VC...`")
+    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying 11-bot squad to VC (this takes a few seconds to avoid Discord rate limits)...`")
 
     all_bots = [bot] + squad_bots
     connected_vcs = []
@@ -395,6 +395,10 @@ async def jumpsquad(ctx, url: str):
     # 2. PHASE 1: Connect all bots FIRST (with delay to avoid rate limits)
     for b in all_bots:
         try:
+            # Skip bots that aren't properly logged in/ready
+            if not b.is_ready(): 
+                continue
+
             b_channel = b.get_channel(channel.id) or await b.fetch_channel(channel.id)
             vc = discord.utils.get(b.voice_clients, guild=b_channel.guild)
             
@@ -412,20 +416,31 @@ async def jumpsquad(ctx, url: str):
         except Exception as e:
             print(f"Bot {b.user} failed to join: {e}")
 
-    # 3. PHASE 2: Play audio simultaneously on all successfully connected bots
-    for vc in connected_vcs:
+    await msg.edit(content=f"🔊 **VC BREACHED** 🔊\n`Synchronizing audio across {len(connected_vcs)} bots...`")
+
+    # 3. PHASE 2: PRE-LOAD AUDIO SOURCES (This is the trick to perfectly sync them)
+    audio_sources = []
+    for _ in connected_vcs:
+        # We spawn the FFmpeg processes beforehand so they don't delay the play command
+        audio_sources.append(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
+
+    # 4. PHASE 3: PLAY AUDIO SIMULTANEOUSLY
+    # Firing them off rapidly in a loop ensures they start at the exact same millisecond
+    for i, vc in enumerate(connected_vcs):
         try:
-            vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
+            vc.play(audio_sources[i])
         except Exception as e:
             print(f"Failed to play on bot {vc.client.user}: {e}")
 
-    await msg.edit(content=f"🔊 **JUMPSQUAD DEPLOYED** 🔊\nNow playing **{title}** on {len(connected_vcs)} bots simultaneously!")
+    await msg.edit(content=f"🔊 **JUMPSQUAD FULLY DEPLOYED** 🔊\nNow playing **{title}** on {len(connected_vcs)} bots simultaneously!")
 
 @bot.command(aliases=['squadstop', 'squad_dc'])
 async def squadleave(ctx):
     all_bots = [bot] + squad_bots
     disconnected = 0
     for b in all_bots:
+        if not b.is_ready():
+            continue
         vc = discord.utils.get(b.voice_clients, guild=ctx.guild)
         if vc:
             await vc.disconnect()
@@ -435,7 +450,6 @@ async def squadleave(ctx):
         await ctx.send(f"👋 Recalled the Jumpsquad. Disconnected {disconnected} bots.")
     else:
         await ctx.send("❌ The Jumpsquad isn't in any voice channels.")
-
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
@@ -622,13 +636,8 @@ async def mines(ctx, bet: int, bombs: int = 4):
 # SERVER KEEP-ALIVE & BOOT
 # ==========================================
 async def start_all_bots():
-    # Grab the squad tokens from Render's environment variables
-    squad_tokens = [
-        os.environ.get('SQUAD_TOKEN_1'),
-        os.environ.get('SQUAD_TOKEN_2'),
-        os.environ.get('SQUAD_TOKEN_3'),
-        os.environ.get('SQUAD_TOKEN_4')
-    ]
+    # Grab the 10 squad tokens from Render's environment variables
+    squad_tokens = [os.environ.get(f'SQUAD_TOKEN_{i}') for i in range(1, 11)]
     
     # Queue up the main bot
     tasks = [bot.start(os.environ.get('DISCORD_TOKEN'))]
