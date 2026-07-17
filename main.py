@@ -17,7 +17,7 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 # ==========================================
 # JUMPSQUAD INITIALIZATION
 # ==========================================
-# Create 10 additional bot instances for the massive squad
+# Create 10 additional bot instances for the squad
 squad_bots = [commands.Bot(command_prefix='!', intents=intents, help_command=None) for _ in range(10)]
 
 # ==========================================
@@ -375,7 +375,7 @@ async def jumpsquad(ctx, url: str):
         return await ctx.send("❌ You need to be in a voice channel first!")
     
     channel = ctx.author.voice.channel
-    msg = await ctx.send("🚨 **DEPLOYING THE JUMPSQUAD (11 BOTS MAX)** 🚨\n`Extracting audio...`")
+    msg = await ctx.send("🚨 **DEPLOYING THE JUMPSQUAD** 🚨\n`Extracting audio...`")
 
     # 1. Extract the direct audio stream URL just ONCE for all bots
     try:
@@ -387,7 +387,7 @@ async def jumpsquad(ctx, url: str):
     except Exception as e:
         return await msg.edit(content=f"❌ Error extracting audio: {e}")
 
-    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying 11-bot squad to VC (this takes a few seconds to avoid Discord rate limits)...`")
+    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying 11-bot squad to VC (this takes a few seconds to avoid rate limits)...`")
 
     all_bots = [bot] + squad_bots
     connected_vcs = []
@@ -450,6 +450,7 @@ async def squadleave(ctx):
         await ctx.send(f"👋 Recalled the Jumpsquad. Disconnected {disconnected} bots.")
     else:
         await ctx.send("❌ The Jumpsquad isn't in any voice channels.")
+
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
