@@ -10,7 +10,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
-# --- ECONOMY SYSTEM ---
+# ==========================================
+# ECONOMY SYSTEM
+# ==========================================
 user_balances = {}
 
 def get_balance(user_id):
@@ -21,11 +23,13 @@ def get_balance(user_id):
 def update_balance(user_id, amount):
     user_balances[user_id] = get_balance(user_id) + amount
 
-# --- STATUS SETUP ---
+# ==========================================
+# STATUS SETUP
+# ==========================================
 status_list = [
     "touching grass",
+    "robbing your friends",
     "losing my life savings at !slots",
-    "judging your music taste",
     "type !cmds for chaos"
 ]
 
@@ -40,18 +44,75 @@ async def change_status():
     new_status = random.choice(status_list)
     await bot.change_presence(activity=discord.Game(name=new_status))
 
-# --- UTILITY COMMANDS ---
+# ==========================================
+# UTILITY & ECONOMY COMMANDS
+# ==========================================
 @bot.command()
 async def cmds(ctx):
-    embed = discord.Embed(title="🤖 Bot Command Menu", color=discord.Color.blue(), description="Here is everything I can do:")
-    embed.add_field(name="🛠️ Utility", value="`!ping` - Check if I'm alive\n`!afk [reason]` - Set your AFK status\n`!bal` - Check your coin balance", inline=False)
-    embed.add_field(name="🎲 Interactive Casino", value="`!mines [bet]` - Play interactive minesweeper\n`!slots [bet]` - Spin the interactive slot machine\n`!coinflip [bet]` - Flip a coin for double or nothing", inline=False)
+    embed = discord.Embed(title="🤖 Bot Command Menu", color=discord.Color.purple())
+    embed.add_field(name="🛠️ Utility", value="`!ping` - Check status\n`!afk [reason]` - Set AFK status", inline=False)
+    embed.add_field(name="💰 Economy", value="`!bal` - Check your coins\n`!pay [@user] [amount]` - Give coins\n`!rob [@user]` - Try to steal coins\n`!rich` - Server leaderboard", inline=False)
+    embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]` - Interactive minesweeper\n`!slots [bet]` - Spin the slots\n`!coinflip [bet]` - Double or nothing", inline=False)
     await ctx.send(embed=embed)
 
+@bot.command()
+async def afk(ctx, *, reason="touching grass"):
+    await ctx.send(f'{ctx.author.mention} is now AFK. Reason: {reason}')
+
 @bot.command(aliases=['balance', 'coins'])
-async def bal(ctx):
-    coins = get_balance(ctx.author.id)
-    await ctx.send(f"💰 {ctx.author.mention}, you currently have **{coins} coins**.")
+async def bal(ctx, member: discord.Member = None):
+    target = member or ctx.author
+    coins = get_balance(target.id)
+    await ctx.send(f"💰 {target.mention} currently has **{coins} coins**.")
+
+@bot.command()
+async def pay(ctx, member: discord.Member, amount: int):
+    if amount <= 0:
+        return await ctx.send("❌ You must pay at least 1 coin.")
+    if get_balance(ctx.author.id) < amount:
+        return await ctx.send("❌ You don't have enough coins for that!")
+    if member.id == ctx.author.id:
+        return await ctx.send("❌ You can't pay yourself!")
+
+    update_balance(ctx.author.id, -amount)
+    update_balance(member.id, amount)
+    await ctx.send(f"💸 {ctx.author.mention} successfully paid {member.mention} **{amount} coins**!")
+
+@bot.command()
+async def rob(ctx, member: discord.Member):
+    if member.id == ctx.author.id:
+        return await ctx.send("❌ You can't rob yourself!")
+    if get_balance(member.id) < 50:
+        return await ctx.send("❌ They are too poor to rob right now.")
+    if get_balance(ctx.author.id) < 50:
+        return await ctx.send("❌ You need at least 50 coins to cover the fine if you get caught!")
+
+    # 40% chance to succeed
+    if random.random() < 0.40:
+        steal_amount = random.randint(10, int(get_balance(member.id) * 0.3)) # Steal up to 30% of their cash
+        update_balance(member.id, -steal_amount)
+        update_balance(ctx.author.id, steal_amount)
+        await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} snuck away with **{steal_amount} coins** from {member.mention}!")
+    else:
+        fine = 50
+        update_balance(ctx.author.id, -fine)
+        update_balance(member.id, fine)
+        await ctx.send(f"🚨 **BUSTED!** {ctx.author.mention} got caught trying to rob {member.mention} and had to pay a **{fine} coin** fine!")
+
+@bot.command(aliases=['leaderboard', 'top'])
+async def rich(ctx):
+    # Sorts the dictionary by balances in descending order
+    sorted_balances = sorted(user_balances.items(), key=lambda item: item[1], reverse=True)
+    
+    embed = discord.Embed(title="🏆 Richest Players", color=discord.Color.gold())
+    board = ""
+    for index, (user_id, balance) in enumerate(sorted_balances[:5]):
+        user = bot.get_user(user_id)
+        username = user.name if user else f"Unknown User ({user_id})"
+        board += f"**{index + 1}.** {username} - 💰 {balance}\n"
+    
+    embed.description = board if board else "Nobody has any money yet!"
+    await ctx.send(embed=embed)
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
@@ -64,7 +125,6 @@ class CoinflipView(discord.ui.View):
         self.author = author
         self.bet = bet
 
-    # THIS STOPS OTHER PEOPLE FROM CLICKING YOUR BUTTONS!
     async def interaction_check(self, interaction: discord.Interaction):
         if interaction.user != self.author:
             await interaction.response.send_message("🛑 Hands off! This isn't your coinflip.", ephemeral=True)
@@ -154,7 +214,7 @@ class MineButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view = self.view
         if self.is_bomb:
-            # Hit a bomb! Reveal everything and disable.
+            # Hit a bomb! You lose your original bet.
             update_balance(view.author.id, -view.bet)
             for child in view.children:
                 child.disabled = True
@@ -175,29 +235,31 @@ class MineButton(discord.ui.Button):
             self.label = ""
             self.disabled = True
             view.safe_clicks += 1
-            # Increase winnings multiplier for every safe click
-            view.current_winnings = int(view.bet * (1.2 ** view.safe_clicks))
+            
+            # The more bombs on the board, the faster the multiplier grows!
+            multiplier = 1.0 + (view.safe_clicks * (view.bomb_count * 0.1))
+            view.current_winnings = int(view.bet * multiplier)
             
             embed = interaction.message.embeds[0]
             embed.description = f"Safe! 💎 {view.author.mention}'s current winnings: **{view.current_winnings} coins**.\nKeep clicking or Cash Out!"
             await interaction.response.edit_message(embed=embed, view=view)
 
 class MinesView(discord.ui.View):
-    def __init__(self, author, bet):
+    def __init__(self, author, bet, bomb_count):
         super().__init__(timeout=120)
         self.author = author
         self.bet = bet
+        self.bomb_count = bomb_count
         self.safe_clicks = 0
         self.current_winnings = bet
         
-        # Creates a 4x4 grid (16 tiles) with 4 bombs
-        tiles = [True]*4 + [False]*12
+        # Creates a 4x4 grid (16 tiles) based on your custom bomb count
+        tiles = [True]*bomb_count + [False]*(16 - bomb_count)
         random.shuffle(tiles)
         
         for i, is_bomb in enumerate(tiles):
             self.add_item(MineButton(is_bomb, x=i%4, y=i//4))
             
-        # Add Cashout Button on the very bottom row
         cashout = discord.ui.Button(style=discord.ButtonStyle.primary, label="💰 Cash Out", row=4)
         cashout.callback = self.cash_out
         self.add_item(cashout)
@@ -213,7 +275,9 @@ class MinesView(discord.ui.View):
             await interaction.response.send_message("You need to click at least one safe tile to cash out!", ephemeral=True)
             return
             
-        update_balance(self.author.id, self.current_winnings)
+        # Give them their profit (current winnings minus original bet, since they haven't been charged the bet yet)
+        profit = self.current_winnings - self.bet
+        update_balance(self.author.id, profit)
         for child in self.children:
             child.disabled = True
             
@@ -224,12 +288,14 @@ class MinesView(discord.ui.View):
         self.stop()
 
 @bot.command()
-async def mines(ctx, bet: int):
+async def mines(ctx, bet: int, bombs: int = 4):
     if bet <= 0 or bet > get_balance(ctx.author.id):
         return await ctx.send("❌ Invalid bet amount! Check your balance.")
+    if bombs < 1 or bombs > 15:
+        return await ctx.send("❌ You must choose between 1 and 15 bombs.")
     
-    view = MinesView(ctx.author, bet)
-    embed = discord.Embed(title="🧨 Minefield", color=discord.Color.blue())
+    view = MinesView(ctx.author, bet, bombs)
+    embed = discord.Embed(title=f"🧨 Minefield ({bombs} Bombs)", color=discord.Color.blue())
     embed.description = f"{ctx.author.mention} is playing for **{bet} coins**!\nClick the tiles to find gems 💎 and avoid the bombs 💣."
     await ctx.send(embed=embed, view=view)
 
