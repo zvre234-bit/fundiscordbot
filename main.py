@@ -2,8 +2,11 @@ import discord
 from discord.ext import commands, tasks
 import os
 import random
+import asyncio
+from datetime import datetime, timedelta
 from keep_alive import keep_alive
 
+# Enable Privileged Gateway Intents
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True 
@@ -11,10 +14,14 @@ intents.members = True
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 
 # ==========================================
-# ECONOMY SYSTEM
+# DATABASES (Memory)
 # ==========================================
 user_balances = {}
+user_inventory = {}
+user_cooldowns = {}
+quote_book = []
 
+# --- Economy Functions ---
 def get_balance(user_id):
     if user_id not in user_balances:
         user_balances[user_id] = 1000 
@@ -23,13 +30,19 @@ def get_balance(user_id):
 def update_balance(user_id, amount):
     user_balances[user_id] = get_balance(user_id) + amount
 
+def get_inventory(user_id):
+    if user_id not in user_inventory:
+        user_inventory[user_id] = {"padlock": 0, "skimask": 0, "nicktoken": 0}
+    return user_inventory[user_id]
+
 # ==========================================
 # STATUS SETUP
 # ==========================================
 status_list = [
     "touching grass",
     "robbing your friends",
-    "losing my life savings at !slots",
+    "buying padlocks",
+    "saving dumb quotes",
     "type !cmds for chaos"
 ]
 
@@ -45,20 +58,98 @@ async def change_status():
     await bot.change_presence(activity=discord.Game(name=new_status))
 
 # ==========================================
-# UTILITY & ECONOMY COMMANDS
+# UTILITY COMMANDS
 # ==========================================
 @bot.command()
 async def cmds(ctx):
-    embed = discord.Embed(title="🤖 Bot Command Menu", color=discord.Color.purple())
+    embed = discord.Embed(title="🤖 Mega Bot Command Menu", color=discord.Color.purple())
     embed.add_field(name="🛠️ Utility", value="`!ping` - Check status\n`!afk [reason]` - Set AFK status", inline=False)
-    embed.add_field(name="💰 Economy", value="`!bal` - Check your coins\n`!pay [@user] [amount]` - Give coins\n`!rob [@user]` - Try to steal coins\n`!rich` - Server leaderboard", inline=False)
-    embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]` - Interactive minesweeper\n`!slots [bet]` - Spin the slots\n`!coinflip [bet]` - Double or nothing", inline=False)
+    embed.add_field(name="💰 Economy", value="`!bal` `!pay` `!rob` `!rich` `!daily`\n`!shop` `!buy` `!inv`", inline=False)
+    embed.add_field(name="🤡 Chaos", value="`!quote add` `!quote random`\n`!vineboom` `!bruh`\n`!usenick [@user] [name]`", inline=False)
+    embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]`\n`!slots [bet]`\n`!coinflip [bet]`", inline=False)
     await ctx.send(embed=embed)
+
+@bot.command()
+async def ping(ctx):
+    await ctx.send('Pong! The bot is online and ready for chaos.')
 
 @bot.command()
 async def afk(ctx, *, reason="touching grass"):
     await ctx.send(f'{ctx.author.mention} is now AFK. Reason: {reason}')
 
+# ==========================================
+# THE SHOP & DAILY REWARDS
+# ==========================================
+shop_items = {
+    "padlock": {"price": 200, "desc": "Blocks one !rob attempt against you.", "icon": "🔒"},
+    "skimask": {"price": 500, "desc": "Increases your chance to pull off a !rob.", "icon": "🎿"},
+    "nicktoken": {"price": 2000, "desc": "Change a friend's nickname (!usenick).", "icon": "🏷️"}
+}
+
+@bot.command()
+async def shop(ctx):
+    embed = discord.Embed(title="🛒 The Black Market", color=discord.Color.green())
+    for item, data in shop_items.items():
+        embed.add_field(name=f"{data['icon']} {item.capitalize()} - {data['price']} coins", value=data['desc'], inline=False)
+    embed.set_footer(text="Use !buy [item] to purchase.")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def buy(ctx, item: str):
+    item = item.lower()
+    if item not in shop_items:
+        return await ctx.send("❌ That item doesn't exist in the shop.")
+    
+    price = shop_items[item]["price"]
+    if get_balance(ctx.author.id) < price:
+        return await ctx.send("❌ You're too broke to buy this.")
+    
+    update_balance(ctx.author.id, -price)
+    inv = get_inventory(ctx.author.id)
+    inv[item] += 1
+    await ctx.send(f"✅ You bought a {shop_items[item]['icon']} **{item.capitalize()}** for {price} coins!")
+
+@bot.command()
+async def inv(ctx):
+    inv = get_inventory(ctx.author.id)
+    text = "\n".join([f"{shop_items[k]['icon']} {k.capitalize()}: {v}" for k, v in inv.items() if v > 0])
+    if not text:
+        text = "Your inventory is completely empty. Go buy something!"
+    embed = discord.Embed(title=f"🎒 {ctx.author.name}'s Inventory", description=text, color=discord.Color.gold())
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def daily(ctx):
+    last_claimed = user_cooldowns.get(ctx.author.id)
+    now = datetime.now()
+    
+    if last_claimed and now < last_claimed + timedelta(hours=24):
+        remaining = (last_claimed + timedelta(hours=24)) - now
+        hours, remainder = divmod(remaining.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        return await ctx.send(f"⏳ You already claimed your daily! Come back in **{hours}h {minutes}m**.")
+    
+    user_cooldowns[ctx.author.id] = now
+    reward = random.randint(300, 700)
+    update_balance(ctx.author.id, reward)
+    await ctx.send(f"🎁 {ctx.author.mention} claimed their daily reward and got **{reward} coins**!")
+
+@bot.command()
+async def usenick(ctx, member: discord.Member, *, new_nick: str):
+    inv = get_inventory(ctx.author.id)
+    if inv["nicktoken"] < 1:
+        return await ctx.send("❌ You don't own a Nickname Token! Buy one in the !shop.")
+    
+    try:
+        await member.edit(nick=new_nick[:32])
+        inv["nicktoken"] -= 1
+        await ctx.send(f"🏷️ Success! {ctx.author.mention} used a token to change {member.name}'s nickname.")
+    except discord.Forbidden:
+        await ctx.send("❌ I don't have permission to change that user's nickname (they might have a higher role than me).")
+
+# ==========================================
+# ECONOMY & ROBBING 
+# ==========================================
 @bot.command(aliases=['balance', 'coins'])
 async def bal(ctx, member: discord.Member = None):
     target = member or ctx.author
@@ -78,6 +169,18 @@ async def pay(ctx, member: discord.Member, amount: int):
     update_balance(member.id, amount)
     await ctx.send(f"💸 {ctx.author.mention} successfully paid {member.mention} **{amount} coins**!")
 
+@bot.command(aliases=['leaderboard', 'top'])
+async def rich(ctx):
+    sorted_balances = sorted(user_balances.items(), key=lambda item: item[1], reverse=True)
+    embed = discord.Embed(title="🏆 Richest Players", color=discord.Color.gold())
+    board = ""
+    for index, (user_id, balance) in enumerate(sorted_balances[:5]):
+        user = bot.get_user(user_id)
+        username = user.name if user else f"Unknown User ({user_id})"
+        board += f"**{index + 1}.** {username} - 💰 {balance}\n"
+    embed.description = board if board else "Nobody has any money yet!"
+    await ctx.send(embed=embed)
+
 @bot.command()
 async def rob(ctx, member: discord.Member):
     if member.id == ctx.author.id:
@@ -87,32 +190,75 @@ async def rob(ctx, member: discord.Member):
     if get_balance(ctx.author.id) < 50:
         return await ctx.send("❌ You need at least 50 coins to cover the fine if you get caught!")
 
-    # 40% chance to succeed
-    if random.random() < 0.40:
-        steal_amount = random.randint(10, int(get_balance(member.id) * 0.3)) # Steal up to 30% of their cash
+    target_inv = get_inventory(member.id)
+    if target_inv["padlock"] > 0:
+        target_inv["padlock"] -= 1
+        return await ctx.send(f"🔒 **BLOCKED!** {ctx.author.mention} tried to rob {member.mention}, but they had a Padlock! The padlock broke.")
+
+    robber_inv = get_inventory(ctx.author.id)
+    chance = 0.60 if robber_inv["skimask"] > 0 else 0.40
+
+    if random.random() < chance:
+        steal_amount = random.randint(10, int(get_balance(member.id) * 0.3))
         update_balance(member.id, -steal_amount)
         update_balance(ctx.author.id, steal_amount)
-        await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} snuck away with **{steal_amount} coins** from {member.mention}!")
+        if robber_inv["skimask"] > 0:
+            robber_inv["skimask"] -= 1
+            await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} used a Ski Mask and snuck away with **{steal_amount} coins** from {member.mention}! (Mask broke)")
+        else:
+            await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} snuck away with **{steal_amount} coins** from {member.mention}!")
     else:
         fine = 50
         update_balance(ctx.author.id, -fine)
         update_balance(member.id, fine)
-        await ctx.send(f"🚨 **BUSTED!** {ctx.author.mention} got caught trying to rob {member.mention} and had to pay a **{fine} coin** fine!")
+        if robber_inv["skimask"] > 0:
+            robber_inv["skimask"] -= 1
+        await ctx.send(f"🚨 **BUSTED!** {ctx.author.mention} got caught trying to rob {member.mention} and paid a **{fine} coin** fine!")
 
-@bot.command(aliases=['leaderboard', 'top'])
-async def rich(ctx):
-    # Sorts the dictionary by balances in descending order
-    sorted_balances = sorted(user_balances.items(), key=lambda item: item[1], reverse=True)
+# ==========================================
+# THE QUOTE BOOK (HALL OF SHAME)
+# ==========================================
+@bot.group(invoke_without_command=True)
+async def quote(ctx):
+    await ctx.send("Use `!quote add [quote]` or `!quote random`.")
+
+@quote.command()
+async def add(ctx, *, text: str):
+    quote_book.append(f'"{text}" - added by {ctx.author.name}')
+    await ctx.send("✍️ Added to the Hall of Shame.")
+
+@quote.command()
+async def random_quote(ctx):
+    if not quote_book:
+        return await ctx.send("The quote book is empty!")
+    await ctx.send(random.choice(quote_book))
+
+# ==========================================
+# HIT-AND-RUN SOUNDBOARDS
+# ==========================================
+async def play_sound(ctx, filename):
+    if not ctx.author.voice:
+        return await ctx.send("❌ You need to be in a voice channel first!")
     
-    embed = discord.Embed(title="🏆 Richest Players", color=discord.Color.gold())
-    board = ""
-    for index, (user_id, balance) in enumerate(sorted_balances[:5]):
-        user = bot.get_user(user_id)
-        username = user.name if user else f"Unknown User ({user_id})"
-        board += f"**{index + 1}.** {username} - 💰 {balance}\n"
-    
-    embed.description = board if board else "Nobody has any money yet!"
-    await ctx.send(embed=embed)
+    channel = ctx.author.voice.channel
+    try:
+        voice_client = await channel.connect()
+        voice_client.play(discord.FFmpegPCMAudio(f"sounds/{filename}"))
+        
+        while voice_client.is_playing():
+            await asyncio.sleep(1)
+            
+        await voice_client.disconnect()
+    except Exception as e:
+        await ctx.send(f"Audio error (Make sure FFmpeg is installed and the sounds folder exists): {e}")
+
+@bot.command()
+async def vineboom(ctx):
+    await play_sound(ctx, "vineboom.mp3")
+
+@bot.command()
+async def bruh(ctx):
+    await play_sound(ctx, "bruh.mp3")
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
@@ -214,7 +360,6 @@ class MineButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         view = self.view
         if self.is_bomb:
-            # Hit a bomb! You lose your original bet.
             update_balance(view.author.id, -view.bet)
             for child in view.children:
                 child.disabled = True
@@ -229,14 +374,12 @@ class MineButton(discord.ui.Button):
             await interaction.response.edit_message(embed=embed, view=view)
             view.stop()
         else:
-            # Safe tile!
             self.style = discord.ButtonStyle.success
             self.emoji = "💎"
             self.label = ""
             self.disabled = True
             view.safe_clicks += 1
             
-            # The more bombs on the board, the faster the multiplier grows!
             multiplier = 1.0 + (view.safe_clicks * (view.bomb_count * 0.1))
             view.current_winnings = int(view.bet * multiplier)
             
@@ -253,7 +396,6 @@ class MinesView(discord.ui.View):
         self.safe_clicks = 0
         self.current_winnings = bet
         
-        # Creates a 4x4 grid (16 tiles) based on your custom bomb count
         tiles = [True]*bomb_count + [False]*(16 - bomb_count)
         random.shuffle(tiles)
         
@@ -275,7 +417,6 @@ class MinesView(discord.ui.View):
             await interaction.response.send_message("You need to click at least one safe tile to cash out!", ephemeral=True)
             return
             
-        # Give them their profit (current winnings minus original bet, since they haven't been charged the bet yet)
         profit = self.current_winnings - self.bet
         update_balance(self.author.id, profit)
         for child in self.children:
@@ -299,7 +440,8 @@ async def mines(ctx, bet: int, bombs: int = 4):
     embed.description = f"{ctx.author.mention} is playing for **{bet} coins**!\nClick the tiles to find gems 💎 and avoid the bombs 💣."
     await ctx.send(embed=embed, view=view)
 
-
-# Starts the web server, then runs the bot
+# ==========================================
+# SERVER KEEP-ALIVE & BOOT
+# ==========================================
 keep_alive()
 bot.run(os.environ.get('DISCORD_TOKEN'))
