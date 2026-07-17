@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import os
 import random
 import asyncio
+import yt_dlp
 from datetime import datetime, timedelta
 from keep_alive import keep_alive
 
@@ -42,7 +43,7 @@ status_list = [
     "touching grass",
     "robbing your friends",
     "buying padlocks",
-    "saving dumb quotes",
+    "vibing to !lofi",
     "type !cmds for chaos"
 ]
 
@@ -67,6 +68,7 @@ async def cmds(ctx):
     embed.add_field(name="💰 Economy", value="`!bal` `!pay` `!rob` `!rich` `!daily`\n`!shop` `!buy` `!inv`", inline=False)
     embed.add_field(name="🤡 Chaos", value="`!quote add` `!quote random`\n`!vineboom` `!bruh`\n`!usenick [@user] [name]`", inline=False)
     embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]`\n`!slots [bet]`\n`!coinflip [bet]`", inline=False)
+    embed.add_field(name="🎧 Music & Voice", value="`!playsound [url]` `!lofi` `!playlist [name]`\n`!afkbot` `!leave`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -145,7 +147,7 @@ async def usenick(ctx, member: discord.Member, *, new_nick: str):
         inv["nicktoken"] -= 1
         await ctx.send(f"🏷️ Success! {ctx.author.mention} used a token to change {member.name}'s nickname.")
     except discord.Forbidden:
-        await ctx.send("❌ I don't have permission to change that user's nickname (they might have a higher role than me).")
+        await ctx.send("❌ I don't have permission to change that user's nickname.")
 
 # ==========================================
 # ECONOMY & ROBBING 
@@ -236,13 +238,21 @@ async def random_quote(ctx):
 # ==========================================
 # HIT-AND-RUN SOUNDBOARDS
 # ==========================================
-async def play_sound(ctx, filename):
+async def play_local_sound(ctx, filename):
     if not ctx.author.voice:
         return await ctx.send("❌ You need to be in a voice channel first!")
     
     channel = ctx.author.voice.channel
     try:
-        voice_client = await channel.connect()
+        voice_client = ctx.voice_client
+        if not voice_client:
+            voice_client = await channel.connect()
+        elif voice_client.channel != channel:
+            await voice_client.move_to(channel)
+
+        if voice_client.is_playing():
+            voice_client.stop()
+
         voice_client.play(discord.FFmpegPCMAudio(f"sounds/{filename}"))
         
         while voice_client.is_playing():
@@ -250,15 +260,104 @@ async def play_sound(ctx, filename):
             
         await voice_client.disconnect()
     except Exception as e:
-        await ctx.send(f"Audio error (Make sure FFmpeg is installed and the sounds folder exists): {e}")
+        await ctx.send(f"Audio error: {e}")
 
 @bot.command()
 async def vineboom(ctx):
-    await play_sound(ctx, "vineboom.mp3")
+    await play_local_sound(ctx, "vineboom.mp3")
 
 @bot.command()
 async def bruh(ctx):
-    await play_sound(ctx, "bruh.mp3")
+    await play_local_sound(ctx, "bruh.mp3")
+
+# ==========================================
+# MUSIC & VOICE STREAMING
+# ==========================================
+# Setup yt-dlp to stream audio instead of downloading it
+YTDL_OPTS = {
+    'format': 'bestaudio/best',
+    'noplaylist': 'True',
+    'quiet': True,
+    'no_warnings': True,
+}
+FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
+}
+
+async def stream_audio(ctx, url, channel=None):
+    if not channel:
+        if not ctx.author.voice:
+            return await ctx.send("❌ Join a voice channel first!")
+        channel = ctx.author.voice.channel
+
+    try:
+        vc = ctx.voice_client
+        if not vc:
+            vc = await channel.connect()
+        elif vc.channel != channel:
+            await vc.move_to(channel)
+
+        if vc.is_playing():
+            vc.stop()
+
+        msg = await ctx.send("🔍 `Loading audio stream...`")
+        
+        # Run yt-dlp extract in background to avoid freezing the bot
+        with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+            audio_url = info['url']
+            title = info.get('title', 'Unknown Audio')
+
+        vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
+        await msg.edit(content=f"🎶 **Now Playing:** {title}")
+
+    except Exception as e:
+        await ctx.send(f"❌ Error playing audio: {e}")
+
+@bot.command(aliases=['play'])
+async def playsound(ctx, url: str):
+    await stream_audio(ctx, url)
+
+@bot.command()
+async def lofi(ctx):
+    # Lofi Girl 24/7 Stream
+    await stream_audio(ctx, "https://www.youtube.com/watch?v=jfKfPfyJRdk")
+
+@bot.command()
+async def afkbot(ctx):
+    # Hardcoded VC ID per your request
+    TARGET_VC_ID = 1527215057174532260
+    target_channel = bot.get_channel(TARGET_VC_ID)
+    
+    if not target_channel:
+        return await ctx.send("❌ I couldn't find the VC with that ID! Make sure I have permissions to see it.")
+    
+    await ctx.send("🤖 `Engaging AFK Bot Protocol. Moving to AFK VC...`")
+    await stream_audio(ctx, "https://www.youtube.com/watch?v=jfKfPfyJRdk", channel=target_channel)
+
+@bot.command()
+async def playlist(ctx, preset: str = None):
+    presets = {
+        "hype": "https://www.youtube.com/watch?v=aGjtEXUqObI",
+        "gaming": "https://www.youtube.com/watch?v=1tGhhz8ExQk",
+        "chill": "https://www.youtube.com/watch?v=jfKfPfyJRdk"
+    }
+    
+    if not preset or preset.lower() not in presets:
+        options = ", ".join(presets.keys())
+        return await ctx.send(f"🎧 Please choose a preset playlist: `{options}`\nExample: `!playlist hype`")
+        
+    await stream_audio(ctx, presets[preset.lower()])
+
+@bot.command(aliases=['stop', 'dc'])
+async def leave(ctx):
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        await ctx.send("👋 Disconnected from the voice channel.")
+    else:
+        await ctx.send("❌ I'm not in a voice channel right now.")
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
