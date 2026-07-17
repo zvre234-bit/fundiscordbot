@@ -275,10 +275,11 @@ async def bruh(ctx):
 # ==========================================
 # Setup yt-dlp to stream audio instead of downloading it
 YTDL_OPTS = {
-    'format': 'bestaudio/best',
+  'format': 'bestaudio/best',
     'noplaylist': 'True',
     'quiet': True,
     'no_warnings': True,
+    'cookiefile': 'cookies.txt',
 }
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
