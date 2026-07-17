@@ -389,17 +389,15 @@ async def jumpsquad(ctx, url: str):
 
     await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying squad to VC...`")
 
-    # 2. Combine main bot and squad bots into one deployment list
     all_bots = [bot] + squad_bots
+    connected_vcs = []
 
-    # 3. Connect and play for each bot sequentially
-    deployed_count = 0
+    # 2. PHASE 1: Connect all bots FIRST (with delay to avoid rate limits)
     for b in all_bots:
         try:
-            # The squad bots need to fetch the channel using their own internal cache
             b_channel = b.get_channel(channel.id) or await b.fetch_channel(channel.id)
-            
             vc = discord.utils.get(b.voice_clients, guild=b_channel.guild)
+            
             if not vc:
                 vc = await b_channel.connect()
             elif vc.channel != b_channel:
@@ -407,29 +405,36 @@ async def jumpsquad(ctx, url: str):
 
             if vc.is_playing():
                 vc.stop()
-
-            # Play the shared audio stream
-            vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
-            deployed_count += 1
+                
+            connected_vcs.append(vc)
             await asyncio.sleep(0.5) # Prevents Discord from rate-limiting the joins
             
         except Exception as e:
-            print(f"Bot {b.user} failed to join/play: {e}")
+            print(f"Bot {b.user} failed to join: {e}")
 
-    await msg.edit(content=f"🔊 **JUMPSQUAD DEPLOYED** 🔊\nNow playing **{title}** on {deployed_count} bots simultaneously!")
+    # 3. PHASE 2: Play audio simultaneously on all successfully connected bots
+    for vc in connected_vcs:
+        try:
+            vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
+        except Exception as e:
+            print(f"Failed to play on bot {vc.client.user}: {e}")
 
-@bot.command()
+    await msg.edit(content=f"🔊 **JUMPSQUAD DEPLOYED** 🔊\nNow playing **{title}** on {len(connected_vcs)} bots simultaneously!")
+
+@bot.command(aliases=['squadstop', 'squad_dc'])
 async def squadleave(ctx):
     all_bots = [bot] + squad_bots
-    disconnected_count = 0
-    
+    disconnected = 0
     for b in all_bots:
         vc = discord.utils.get(b.voice_clients, guild=ctx.guild)
         if vc:
             await vc.disconnect()
-            disconnected_count += 1
-            
-    await ctx.send(f"👋 Recalled {disconnected_count} bots from the voice channel.")
+            disconnected += 1
+    
+    if disconnected > 0:
+        await ctx.send(f"👋 Recalled the Jumpsquad. Disconnected {disconnected} bots.")
+    else:
+        await ctx.send("❌ The Jumpsquad isn't in any voice channels.")
 
 
 # ==========================================
