@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 import os
 import random
 import asyncio
@@ -13,6 +14,11 @@ intents.message_content = True
 intents.members = True 
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+
+# Sync the slash commands when the bot boots up
+async def setup_hook():
+    await bot.tree.sync()
+bot.setup_hook = setup_hook
 
 # ==========================================
 # JUMPSQUAD INITIALIZATION
@@ -74,7 +80,7 @@ async def cmds(ctx):
     embed.add_field(name="💰 Economy", value="`!bal` `!pay` `!rob` `!rich` `!daily`\n`!shop` `!buy` `!inv`", inline=False)
     embed.add_field(name="🤡 Chaos", value="`!quote add` `!quote random`\n`!vineboom` `!bruh`\n`!usenick [@user] [name]`", inline=False)
     embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]`\n`!slots [bet]`\n`!coinflip [bet]`", inline=False)
-    embed.add_field(name="🎧 Music & Voice", value="`!playsound [url]` `!lofi` `!playlist [name]`\n`!afkbot` `!leave`\n`!jumpsquad [url]` `!squadleave`", inline=False)
+    embed.add_field(name="🎧 Music & Voice", value="`/playfile` (Upload MP3/MP4)\n`!playsound [url]` `!lofi` `!playlist [name]`\n`!afkbot` `!leave`\n`!jumpsquad [url]` `!squadleave`", inline=False)
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -292,6 +298,34 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
+# --- BRAND NEW /playfile COMMAND ---
+@bot.tree.command(name="playfile", description="Upload an MP3 or MP4 file to play in your voice channel")
+@app_commands.describe(file="The MP3 or MP4 file you want the bot to play")
+async def playfile(interaction: discord.Interaction, file: discord.Attachment):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ You need to be in a voice channel first!", ephemeral=True)
+        
+    channel = interaction.user.voice.channel
+    await interaction.response.send_message(f"🔍 Loading uploaded file: `{file.filename}`...")
+    
+    try:
+        vc = interaction.guild.voice_client
+        if not vc:
+            vc = await channel.connect()
+        elif vc.channel != channel:
+            await vc.move_to(channel)
+
+        if vc.is_playing():
+            vc.stop()
+
+        # Discord automatically gives us a direct URL to the file you upload!
+        # The FFMPEG_OPTIONS ensures we only stream the audio (even if it's an MP4 video)
+        vc.play(discord.FFmpegPCMAudio(file.url, **FFMPEG_OPTIONS))
+        await interaction.edit_original_response(content=f"🎶 **Now Playing:** {file.filename}")
+
+    except Exception as e:
+        await interaction.edit_original_response(content=f"❌ Error playing audio: {e}")
+
 async def stream_audio(ctx, url, channel=None):
     if not channel:
         if not ctx.author.voice:
@@ -387,7 +421,7 @@ async def jumpsquad(ctx, url: str):
     except Exception as e:
         return await msg.edit(content=f"❌ Error extracting audio: {e}")
 
-    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying 11-bot squad to VC (this takes a few seconds to avoid rate limits)...`")
+    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying squad to VC (this takes a few seconds to avoid Discord rate limits)...`")
 
     all_bots = [bot] + squad_bots
     connected_vcs = []
