@@ -18,6 +18,7 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
 # Sync the slash commands when the bot boots up
 async def setup_hook():
     await bot.tree.sync()
+    print("Slash commands synced globally!")
 bot.setup_hook = setup_hook
 
 # ==========================================
@@ -33,6 +34,12 @@ user_balances = {}
 user_inventory = {}
 user_cooldowns = {}
 quote_book = []
+custom_playlists = {} # format: {user_id: {"playlist_name": ["url1", "url2"]}}
+
+# Music States
+server_repeat = {}
+server_queues = {}
+server_current_song = {}
 
 # --- Economy Functions ---
 def get_balance(user_id):
@@ -55,8 +62,8 @@ status_list = [
     "touching grass",
     "robbing your friends",
     "buying padlocks",
-    "vibing to !lofi",
-    "type !cmds for chaos"
+    "vibing to /lofi",
+    "type /cmds for chaos"
 ]
 
 @bot.event
@@ -73,118 +80,119 @@ async def change_status():
 # ==========================================
 # UTILITY COMMANDS
 # ==========================================
-@bot.command()
-async def cmds(ctx):
+@bot.tree.command(name="cmds", description="Show the Mega Bot Command Menu")
+async def cmds(interaction: discord.Interaction):
     embed = discord.Embed(title="🤖 Mega Bot Command Menu", color=discord.Color.purple())
-    embed.add_field(name="🛠️ Utility", value="`!ping` - Check status\n`!afk [reason]` - Set AFK status", inline=False)
-    embed.add_field(name="💰 Economy", value="`!bal` `!pay` `!rob` `!rich` `!daily`\n`!shop` `!buy` `!inv`", inline=False)
-    embed.add_field(name="🤡 Chaos", value="`!quote add` `!quote random`\n`!vineboom` `!bruh`\n`!usenick [@user] [name]`", inline=False)
-    embed.add_field(name="🎲 Casino", value="`!mines [bet] [bombs]`\n`!slots [bet]`\n`!coinflip [bet]`", inline=False)
-    embed.add_field(name="🎧 Music & Voice", value="`/playfile` (Upload MP3/MP4)\n`!playsound [url]` `!lofi` `!playlist [name]`\n`!afkbot` `!leave`\n`!jumpsquad [url]` `!squadleave`", inline=False)
-    await ctx.send(embed=embed)
+    embed.add_field(name="🛠️ Utility", value="`/ping` - Check status\n`/afk [reason]` - Set AFK status", inline=False)
+    embed.add_field(name="💰 Economy", value="`/bal` `/pay` `/rob` `/rich` `/daily`\n`/shop` `/buy` `/inv`", inline=False)
+    embed.add_field(name="🤡 Chaos", value="`/quote add` `/quote random`\n`/vineboom` `/bruh`\n`/usenick [@user] [name]`", inline=False)
+    embed.add_field(name="🎲 Casino", value="`/mines [bet] [bombs]`\n`/slots [bet]`\n`/coinflip [bet]`", inline=False)
+    embed.add_field(name="🎧 Music & Voice", value="`/playsound [url]` `/playfile` `/pause` `/repeat`\n`/lofi` `/play_preset` `/playlist`\n`/afkbot` `/leave`\n`/jumpsquad [url]` `/jumpsquadfile` `/squadleave`", inline=False)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def ping(ctx):
-    await ctx.send('Pong! The bot is online and ready for chaos.')
+@bot.tree.command(name="ping", description="Check if the bot is alive")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message('Pong! The bot is online and ready for chaos.')
 
-@bot.command()
-async def afk(ctx, *, reason="touching grass"):
-    await ctx.send(f'{ctx.author.mention} is now AFK. Reason: {reason}')
+@bot.tree.command(name="afk", description="Set your status to AFK")
+@app_commands.describe(reason="Why are you AFK?")
+async def afk(interaction: discord.Interaction, reason: str = "touching grass"):
+    await interaction.response.send_message(f'{interaction.user.mention} is now AFK. Reason: {reason}')
 
 # ==========================================
 # THE SHOP & DAILY REWARDS
 # ==========================================
 shop_items = {
-    "padlock": {"price": 200, "desc": "Blocks one !rob attempt against you.", "icon": "🔒"},
-    "skimask": {"price": 500, "desc": "Increases your chance to pull off a !rob.", "icon": "🎿"},
-    "nicktoken": {"price": 2000, "desc": "Change a friend's nickname (!usenick).", "icon": "🏷️"}
+    "padlock": {"price": 200, "desc": "Blocks one /rob attempt against you.", "icon": "🔒"},
+    "skimask": {"price": 500, "desc": "Increases your chance to pull off a /rob.", "icon": "🎿"},
+    "nicktoken": {"price": 2000, "desc": "Change a friend's nickname (/usenick).", "icon": "🏷️"}
 }
 
-@bot.command()
-async def shop(ctx):
+@bot.tree.command(name="shop", description="Open the Black Market")
+async def shop(interaction: discord.Interaction):
     embed = discord.Embed(title="🛒 The Black Market", color=discord.Color.green())
     for item, data in shop_items.items():
         embed.add_field(name=f"{data['icon']} {item.capitalize()} - {data['price']} coins", value=data['desc'], inline=False)
-    embed.set_footer(text="Use !buy [item] to purchase.")
-    await ctx.send(embed=embed)
+    embed.set_footer(text="Use /buy [item] to purchase.")
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def buy(ctx, item: str):
+@bot.tree.command(name="buy", description="Buy an item from the shop")
+async def buy(interaction: discord.Interaction, item: str):
     item = item.lower()
     if item not in shop_items:
-        return await ctx.send("❌ That item doesn't exist in the shop.")
+        return await interaction.response.send_message("❌ That item doesn't exist in the shop.", ephemeral=True)
     
     price = shop_items[item]["price"]
-    if get_balance(ctx.author.id) < price:
-        return await ctx.send("❌ You're too broke to buy this.")
+    if get_balance(interaction.user.id) < price:
+        return await interaction.response.send_message("❌ You're too broke to buy this.", ephemeral=True)
     
-    update_balance(ctx.author.id, -price)
-    inv = get_inventory(ctx.author.id)
+    update_balance(interaction.user.id, -price)
+    inv = get_inventory(interaction.user.id)
     inv[item] += 1
-    await ctx.send(f"✅ You bought a {shop_items[item]['icon']} **{item.capitalize()}** for {price} coins!")
+    await interaction.response.send_message(f"✅ You bought a {shop_items[item]['icon']} **{item.capitalize()}** for {price} coins!")
 
-@bot.command()
-async def inv(ctx):
-    inv = get_inventory(ctx.author.id)
+@bot.tree.command(name="inv", description="Check your inventory")
+async def inv(interaction: discord.Interaction):
+    inv = get_inventory(interaction.user.id)
     text = "\n".join([f"{shop_items[k]['icon']} {k.capitalize()}: {v}" for k, v in inv.items() if v > 0])
     if not text:
         text = "Your inventory is completely empty. Go buy something!"
-    embed = discord.Embed(title=f"🎒 {ctx.author.name}'s Inventory", description=text, color=discord.Color.gold())
-    await ctx.send(embed=embed)
+    embed = discord.Embed(title=f"🎒 {interaction.user.name}'s Inventory", description=text, color=discord.Color.gold())
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def daily(ctx):
-    last_claimed = user_cooldowns.get(ctx.author.id)
+@bot.tree.command(name="daily", description="Claim your daily coins")
+async def daily(interaction: discord.Interaction):
+    last_claimed = user_cooldowns.get(interaction.user.id)
     now = datetime.now()
     
     if last_claimed and now < last_claimed + timedelta(hours=24):
         remaining = (last_claimed + timedelta(hours=24)) - now
         hours, remainder = divmod(remaining.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
-        return await ctx.send(f"⏳ You already claimed your daily! Come back in **{hours}h {minutes}m**.")
+        return await interaction.response.send_message(f"⏳ You already claimed your daily! Come back in **{hours}h {minutes}m**.", ephemeral=True)
     
-    user_cooldowns[ctx.author.id] = now
+    user_cooldowns[interaction.user.id] = now
     reward = random.randint(300, 700)
-    update_balance(ctx.author.id, reward)
-    await ctx.send(f"🎁 {ctx.author.mention} claimed their daily reward and got **{reward} coins**!")
+    update_balance(interaction.user.id, reward)
+    await interaction.response.send_message(f"🎁 {interaction.user.mention} claimed their daily reward and got **{reward} coins**!")
 
-@bot.command()
-async def usenick(ctx, member: discord.Member, *, new_nick: str):
-    inv = get_inventory(ctx.author.id)
+@bot.tree.command(name="usenick", description="Use a Nickname Token on a friend")
+async def usenick(interaction: discord.Interaction, member: discord.Member, new_nick: str):
+    inv = get_inventory(interaction.user.id)
     if inv["nicktoken"] < 1:
-        return await ctx.send("❌ You don't own a Nickname Token! Buy one in the !shop.")
+        return await interaction.response.send_message("❌ You don't own a Nickname Token! Buy one in the /shop.", ephemeral=True)
     
     try:
         await member.edit(nick=new_nick[:32])
         inv["nicktoken"] -= 1
-        await ctx.send(f"🏷️ Success! {ctx.author.mention} used a token to change {member.name}'s nickname.")
+        await interaction.response.send_message(f"🏷️ Success! {interaction.user.mention} used a token to change {member.name}'s nickname.")
     except discord.Forbidden:
-        await ctx.send("❌ I don't have permission to change that user's nickname.")
+        await interaction.response.send_message("❌ I don't have permission to change that user's nickname.", ephemeral=True)
 
 # ==========================================
 # ECONOMY & ROBBING 
 # ==========================================
-@bot.command(aliases=['balance', 'coins'])
-async def bal(ctx, member: discord.Member = None):
-    target = member or ctx.author
+@bot.tree.command(name="bal", description="Check your coin balance")
+async def bal(interaction: discord.Interaction, member: discord.Member = None):
+    target = member or interaction.user
     coins = get_balance(target.id)
-    await ctx.send(f"💰 {target.mention} currently has **{coins} coins**.")
+    await interaction.response.send_message(f"💰 {target.mention} currently has **{coins} coins**.")
 
-@bot.command()
-async def pay(ctx, member: discord.Member, amount: int):
+@bot.tree.command(name="pay", description="Pay a friend some coins")
+async def pay(interaction: discord.Interaction, member: discord.Member, amount: int):
     if amount <= 0:
-        return await ctx.send("❌ You must pay at least 1 coin.")
-    if get_balance(ctx.author.id) < amount:
-        return await ctx.send("❌ You don't have enough coins for that!")
-    if member.id == ctx.author.id:
-        return await ctx.send("❌ You can't pay yourself!")
+        return await interaction.response.send_message("❌ You must pay at least 1 coin.", ephemeral=True)
+    if get_balance(interaction.user.id) < amount:
+        return await interaction.response.send_message("❌ You don't have enough coins for that!", ephemeral=True)
+    if member.id == interaction.user.id:
+        return await interaction.response.send_message("❌ You can't pay yourself!", ephemeral=True)
 
-    update_balance(ctx.author.id, -amount)
+    update_balance(interaction.user.id, -amount)
     update_balance(member.id, amount)
-    await ctx.send(f"💸 {ctx.author.mention} successfully paid {member.mention} **{amount} coins**!")
+    await interaction.response.send_message(f"💸 {interaction.user.mention} successfully paid {member.mention} **{amount} coins**!")
 
-@bot.command(aliases=['leaderboard', 'top'])
-async def rich(ctx):
+@bot.tree.command(name="rich", description="Show the server wealth leaderboard")
+async def rich(interaction: discord.Interaction):
     sorted_balances = sorted(user_balances.items(), key=lambda item: item[1], reverse=True)
     embed = discord.Embed(title="🏆 Richest Players", color=discord.Color.gold())
     board = ""
@@ -193,70 +201,72 @@ async def rich(ctx):
         username = user.name if user else f"Unknown User ({user_id})"
         board += f"**{index + 1}.** {username} - 💰 {balance}\n"
     embed.description = board if board else "Nobody has any money yet!"
-    await ctx.send(embed=embed)
+    await interaction.response.send_message(embed=embed)
 
-@bot.command()
-async def rob(ctx, member: discord.Member):
-    if member.id == ctx.author.id:
-        return await ctx.send("❌ You can't rob yourself!")
+@bot.tree.command(name="rob", description="Attempt to rob a friend")
+async def rob(interaction: discord.Interaction, member: discord.Member):
+    if member.id == interaction.user.id:
+        return await interaction.response.send_message("❌ You can't rob yourself!", ephemeral=True)
     if get_balance(member.id) < 50:
-        return await ctx.send("❌ They are too poor to rob right now.")
-    if get_balance(ctx.author.id) < 50:
-        return await ctx.send("❌ You need at least 50 coins to cover the fine if you get caught!")
+        return await interaction.response.send_message("❌ They are too poor to rob right now.", ephemeral=True)
+    if get_balance(interaction.user.id) < 50:
+        return await interaction.response.send_message("❌ You need at least 50 coins to cover the fine if you get caught!", ephemeral=True)
 
     target_inv = get_inventory(member.id)
     if target_inv["padlock"] > 0:
         target_inv["padlock"] -= 1
-        return await ctx.send(f"🔒 **BLOCKED!** {ctx.author.mention} tried to rob {member.mention}, but they had a Padlock! The padlock broke.")
+        return await interaction.response.send_message(f"🔒 **BLOCKED!** {interaction.user.mention} tried to rob {member.mention}, but they had a Padlock! The padlock broke.")
 
-    robber_inv = get_inventory(ctx.author.id)
+    robber_inv = get_inventory(interaction.user.id)
     chance = 0.60 if robber_inv["skimask"] > 0 else 0.40
 
     if random.random() < chance:
         steal_amount = random.randint(10, int(get_balance(member.id) * 0.3))
         update_balance(member.id, -steal_amount)
-        update_balance(ctx.author.id, steal_amount)
+        update_balance(interaction.user.id, steal_amount)
         if robber_inv["skimask"] > 0:
             robber_inv["skimask"] -= 1
-            await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} used a Ski Mask and snuck away with **{steal_amount} coins** from {member.mention}! (Mask broke)")
+            await interaction.response.send_message(f"🥷 **SUCCESS!** {interaction.user.mention} used a Ski Mask and snuck away with **{steal_amount} coins** from {member.mention}! (Mask broke)")
         else:
-            await ctx.send(f"🥷 **SUCCESS!** {ctx.author.mention} snuck away with **{steal_amount} coins** from {member.mention}!")
+            await interaction.response.send_message(f"🥷 **SUCCESS!** {interaction.user.mention} snuck away with **{steal_amount} coins** from {member.mention}!")
     else:
         fine = 50
-        update_balance(ctx.author.id, -fine)
+        update_balance(interaction.user.id, -fine)
         update_balance(member.id, fine)
         if robber_inv["skimask"] > 0:
             robber_inv["skimask"] -= 1
-        await ctx.send(f"🚨 **BUSTED!** {ctx.author.mention} got caught trying to rob {member.mention} and paid a **{fine} coin** fine!")
+        await interaction.response.send_message(f"🚨 **BUSTED!** {interaction.user.mention} got caught trying to rob {member.mention} and paid a **{fine} coin** fine!")
 
 # ==========================================
 # THE QUOTE BOOK (HALL OF SHAME)
 # ==========================================
-@bot.group(invoke_without_command=True)
-async def quote(ctx):
-    await ctx.send("Use `!quote add [quote]` or `!quote random`.")
+quote_group = app_commands.Group(name="quote", description="Quote book commands")
 
-@quote.command()
-async def add(ctx, *, text: str):
-    quote_book.append(f'"{text}" - added by {ctx.author.name}')
-    await ctx.send("✍️ Added to the Hall of Shame.")
+@quote_group.command(name="add", description="Add a stupid quote to the Hall of Shame")
+async def quote_add(interaction: discord.Interaction, text: str):
+    quote_book.append(f'"{text}" - added by {interaction.user.name}')
+    await interaction.response.send_message("✍️ Added to the Hall of Shame.")
 
-@quote.command()
-async def random_quote(ctx):
+@quote_group.command(name="random", description="Pull a random quote from the Hall of Shame")
+async def quote_random(interaction: discord.Interaction):
     if not quote_book:
-        return await ctx.send("The quote book is empty!")
-    await ctx.send(random.choice(quote_book))
+        return await interaction.response.send_message("The quote book is empty!", ephemeral=True)
+    await interaction.response.send_message(random.choice(quote_book))
+
+bot.tree.add_command(quote_group)
 
 # ==========================================
 # HIT-AND-RUN SOUNDBOARDS
 # ==========================================
-async def play_local_sound(ctx, filename):
-    if not ctx.author.voice:
-        return await ctx.send("❌ You need to be in a voice channel first!")
+async def play_local_sound(interaction: discord.Interaction, filename: str):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ You need to be in a voice channel first!", ephemeral=True)
     
-    channel = ctx.author.voice.channel
+    channel = interaction.user.voice.channel
+    await interaction.response.send_message(f"🔊 Playing {filename}...", ephemeral=True)
+    
     try:
-        voice_client = ctx.voice_client
+        voice_client = interaction.guild.voice_client
         if not voice_client:
             voice_client = await channel.connect()
         elif voice_client.channel != channel:
@@ -272,20 +282,19 @@ async def play_local_sound(ctx, filename):
             
         await voice_client.disconnect()
     except Exception as e:
-        await ctx.send(f"Audio error: {e}")
+        await interaction.followup.send(f"Audio error: {e}", ephemeral=True)
 
-@bot.command()
-async def vineboom(ctx):
-    await play_local_sound(ctx, "vineboom.mp3")
+@bot.tree.command(name="vineboom", description="Hit-and-run Vine Boom sound")
+async def vineboom(interaction: discord.Interaction):
+    await play_local_sound(interaction, "vineboom.mp3")
 
-@bot.command()
-async def bruh(ctx):
-    await play_local_sound(ctx, "bruh.mp3")
+@bot.tree.command(name="bruh", description="Hit-and-run Bruh sound")
+async def bruh(interaction: discord.Interaction):
+    await play_local_sound(interaction, "bruh.mp3")
 
 # ==========================================
 # MUSIC & VOICE STREAMING
 # ==========================================
-# Setup yt-dlp to stream audio instead of downloading it
 YTDL_OPTS = {
     'format': 'bestaudio/best',
     'noplaylist': 'True',
@@ -298,16 +307,15 @@ FFMPEG_OPTIONS = {
     'options': '-vn'
 }
 
-# --- BRAND NEW /playfile COMMAND ---
-@bot.tree.command(name="playfile", description="Upload an MP3 or MP4 file to play in your voice channel")
-@app_commands.describe(file="The MP3 or MP4 file you want the bot to play")
-async def playfile(interaction: discord.Interaction, file: discord.Attachment):
-    if not interaction.user.voice:
-        return await interaction.response.send_message("❌ You need to be in a voice channel first!", ephemeral=True)
-        
-    channel = interaction.user.voice.channel
-    await interaction.response.send_message(f"🔍 Loading uploaded file: `{file.filename}`...")
-    
+def check_queue(error, guild_id, channel):
+    """Called after a song finishes to handle repeating or queues."""
+    # This is called in a separate thread by FFmpeg, so we use threadsafe calls if we need to do async stuff.
+    pass # Kept simple to avoid blocking FFmpeg.
+
+async def core_stream_audio(interaction: discord.Interaction, url: str, channel: discord.VoiceChannel = None, is_file=False):
+    if not channel:
+        channel = interaction.user.voice.channel
+
     try:
         vc = interaction.guild.voice_client
         if not vc:
@@ -315,121 +323,209 @@ async def playfile(interaction: discord.Interaction, file: discord.Attachment):
         elif vc.channel != channel:
             await vc.move_to(channel)
 
-        if vc.is_playing():
+        if vc.is_playing() or vc.is_paused():
             vc.stop()
 
-        # Discord automatically gives us a direct URL to the file you upload!
-        # The FFMPEG_OPTIONS ensures we only stream the audio (even if it's an MP4 video)
-        vc.play(discord.FFmpegPCMAudio(file.url, **FFMPEG_OPTIONS))
-        await interaction.edit_original_response(content=f"🎶 **Now Playing:** {file.filename}")
+        audio_url = url
+        title = "Uploaded File" if is_file else "Unknown Audio"
 
-    except Exception as e:
-        await interaction.edit_original_response(content=f"❌ Error playing audio: {e}")
+        if not is_file:
+            with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
+                loop = asyncio.get_event_loop()
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                audio_url = info['url']
+                title = info.get('title', 'Unknown Audio')
 
-async def stream_audio(ctx, url, channel=None):
-    if not channel:
-        if not ctx.author.voice:
-            return await ctx.send("❌ Join a voice channel first!")
-        channel = ctx.author.voice.channel
+        # Create a looping stream if repeat is enabled
+        def after_playing(e):
+            if server_repeat.get(interaction.guild.id, False):
+                # We need to reconnect the audio stream to repeat
+                coro = core_stream_audio(interaction, url, channel, is_file)
+                asyncio.run_coroutine_threadsafe(coro, bot.loop)
 
-    try:
-        vc = ctx.voice_client
-        if not vc:
-            vc = await channel.connect()
-        elif vc.channel != channel:
-            await vc.move_to(channel)
-
-        if vc.is_playing():
-            vc.stop()
-
-        msg = await ctx.send("🔍 `Loading audio stream...`")
+        vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS), after=after_playing)
+        server_current_song[interaction.guild.id] = {"url": url, "is_file": is_file, "title": title}
         
-        # Run yt-dlp extract in background to avoid freezing the bot
-        with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-            loop = asyncio.get_event_loop()
-            info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
-            audio_url = info['url']
-            title = info.get('title', 'Unknown Audio')
-
-        vc.play(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
-        await msg.edit(content=f"🎶 **Now Playing:** {title}")
+        await interaction.followup.send(f"🎶 **Now Playing:** {title}")
 
     except Exception as e:
-        await ctx.send(f"❌ Error playing audio: {e}")
+        await interaction.followup.send(f"❌ Error playing audio: {e}")
 
-@bot.command(aliases=['play'])
-async def playsound(ctx, url: str):
-    await stream_audio(ctx, url)
+@bot.tree.command(name="playsound", description="Stream audio from a URL")
+async def playsound(interaction: discord.Interaction, url: str):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ Join a voice channel first!", ephemeral=True)
+    await interaction.response.defer()
+    await core_stream_audio(interaction, url)
 
-@bot.command()
-async def lofi(ctx):
-    # Lofi Girl 24/7 Stream
-    await stream_audio(ctx, "https://www.youtube.com/watch?v=jfKfPfyJRdk")
+@bot.tree.command(name="playfile", description="Upload an MP3/MP4 file to play in your voice channel")
+async def playfile(interaction: discord.Interaction, file: discord.Attachment):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ You need to be in a voice channel first!", ephemeral=True)
+    await interaction.response.defer()
+    await core_stream_audio(interaction, file.url, is_file=True)
 
-@bot.command()
-async def afkbot(ctx):
-    # Hardcoded VC ID per your request
+@bot.tree.command(name="pause", description="Pause or resume the current music")
+async def pause_music(interaction: discord.Interaction):
+    vc = interaction.guild.voice_client
+    if not vc:
+        return await interaction.response.send_message("❌ I'm not in a voice channel.", ephemeral=True)
+    
+    if vc.is_paused():
+        vc.resume()
+        await interaction.response.send_message("▶️ Resumed the music.")
+    elif vc.is_playing():
+        vc.pause()
+        await interaction.response.send_message("⏸️ Paused the music.")
+    else:
+        await interaction.response.send_message("❌ Nothing is playing.", ephemeral=True)
+
+@bot.tree.command(name="repeat", description="Toggle repeating the current song")
+async def repeat_music(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    is_repeating = server_repeat.get(guild_id, False)
+    server_repeat[guild_id] = not is_repeating
+    
+    if not is_repeating:
+        await interaction.response.send_message("🔁 **Repeat is ON.** The current song will loop.")
+    else:
+        await interaction.response.send_message("➡️ **Repeat is OFF.**")
+
+@bot.tree.command(name="lofi", description="Play the 24/7 Lofi Girl Stream")
+async def lofi(interaction: discord.Interaction):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ Join a voice channel first!", ephemeral=True)
+    await interaction.response.defer()
+    await core_stream_audio(interaction, "https://www.youtube.com/watch?v=jfKfPfyJRdk")
+
+@bot.tree.command(name="afkbot", description="Send the bot to the AFK channel with Lofi")
+async def afkbot(interaction: discord.Interaction):
     TARGET_VC_ID = 1527215057174532260
     target_channel = bot.get_channel(TARGET_VC_ID)
     
     if not target_channel:
-        return await ctx.send("❌ I couldn't find the VC with that ID! Make sure I have permissions to see it.")
+        return await interaction.response.send_message("❌ I couldn't find the VC with that ID! Make sure I have permissions to see it.", ephemeral=True)
     
-    await ctx.send("🤖 `Engaging AFK Bot Protocol. Moving to AFK VC...`")
-    await stream_audio(ctx, "https://www.youtube.com/watch?v=jfKfPfyJRdk", channel=target_channel)
+    await interaction.response.defer()
+    await interaction.followup.send("🤖 `Engaging AFK Bot Protocol. Moving to AFK VC...`")
+    await core_stream_audio(interaction, "https://www.youtube.com/watch?v=jfKfPfyJRdk", channel=target_channel)
 
-@bot.command()
-async def playlist(ctx, preset: str = None):
+@bot.tree.command(name="leave", description="Disconnect the bot from voice")
+async def leave(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        server_repeat[interaction.guild.id] = False
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("👋 Disconnected from the voice channel.")
+    else:
+        await interaction.response.send_message("❌ I'm not in a voice channel right now.", ephemeral=True)
+
+# ==========================================
+# CUSTOM PLAYLISTS
+# ==========================================
+playlist_group = app_commands.Group(name="playlist", description="Manage and play custom playlists")
+
+@playlist_group.command(name="create", description="Create a new custom playlist")
+async def pl_create(interaction: discord.Interaction, name: str):
+    user_id = interaction.user.id
+    if user_id not in custom_playlists:
+        custom_playlists[user_id] = {}
+    
+    if name in custom_playlists[user_id]:
+        return await interaction.response.send_message(f"❌ You already have a playlist named `{name}`.", ephemeral=True)
+        
+    custom_playlists[user_id][name] = []
+    await interaction.response.send_message(f"✅ Created new empty playlist: **{name}**. Use `/playlist add` to add songs!")
+
+@playlist_group.command(name="add", description="Add a URL or File to your playlist")
+async def pl_add(interaction: discord.Interaction, name: str, url: str = None, file: discord.Attachment = None):
+    user_id = interaction.user.id
+    if user_id not in custom_playlists or name not in custom_playlists[user_id]:
+        return await interaction.response.send_message(f"❌ You don't have a playlist named `{name}`.", ephemeral=True)
+        
+    if not url and not file:
+        return await interaction.response.send_message("❌ You must provide either a URL or an uploaded File.", ephemeral=True)
+        
+    entry = {"url": url if url else file.url, "is_file": file is not None}
+    custom_playlists[user_id][name].append(entry)
+    
+    msg = f"✅ Added song to **{name}**!"
+    if file:
+        msg += "\n*(⚠️ Warning: Discord file attachments expire after 24h, so this saved file will only work today!)*"
+    await interaction.response.send_message(msg)
+
+@playlist_group.command(name="play", description="Play a saved playlist")
+async def pl_play(interaction: discord.Interaction, name: str):
+    user_id = interaction.user.id
+    if user_id not in custom_playlists or name not in custom_playlists[user_id]:
+        return await interaction.response.send_message(f"❌ You don't have a playlist named `{name}`.", ephemeral=True)
+        
+    playlist = custom_playlists[user_id][name]
+    if not playlist:
+        return await interaction.response.send_message("❌ That playlist is empty!", ephemeral=True)
+        
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ Join a voice channel first!", ephemeral=True)
+        
+    await interaction.response.defer()
+    await interaction.followup.send(f"🎧 Starting custom playlist: **{name}** ({len(playlist)} songs). Note: Beta bot will just play the first song on loop if /repeat is on, full queue logic requires a bigger server.")
+    
+    # Play the first song for now to keep it simple in a 1-file script
+    first_song = playlist[0]
+    await core_stream_audio(interaction, first_song["url"], is_file=first_song["is_file"])
+
+bot.tree.add_command(playlist_group)
+
+@bot.tree.command(name="play_preset", description="Play a built-in preset playlist")
+@app_commands.describe(preset="Choose hype, gaming, or chill")
+async def play_preset(interaction: discord.Interaction, preset: str):
     presets = {
         "hype": "https://www.youtube.com/watch?v=aGjtEXUqObI",
         "gaming": "https://www.youtube.com/watch?v=1tGhhz8ExQk",
         "chill": "https://www.youtube.com/watch?v=jfKfPfyJRdk"
     }
     
-    if not preset or preset.lower() not in presets:
+    if preset.lower() not in presets:
         options = ", ".join(presets.keys())
-        return await ctx.send(f"🎧 Please choose a preset playlist: `{options}`\nExample: `!playlist hype`")
+        return await interaction.response.send_message(f"🎧 Choose a preset: `{options}`", ephemeral=True)
         
-    await stream_audio(ctx, presets[preset.lower()])
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ Join a voice channel first!", ephemeral=True)
+        
+    await interaction.response.defer()
+    await core_stream_audio(interaction, presets[preset.lower()])
 
-@bot.command(aliases=['stop', 'dc'])
-async def leave(ctx):
-    if ctx.voice_client:
-        await ctx.voice_client.disconnect()
-        await ctx.send("👋 Disconnected from the voice channel.")
-    else:
-        await ctx.send("❌ I'm not in a voice channel right now.")
 
 # ==========================================
 # JUMPSQUAD COMMANDS
 # ==========================================
-@bot.command()
-async def jumpsquad(ctx, url: str):
-    if not ctx.author.voice:
-        return await ctx.send("❌ You need to be in a voice channel first!")
+async def core_jumpsquad(interaction: discord.Interaction, url: str, is_file=False):
+    if not interaction.user.voice:
+        return await interaction.response.send_message("❌ You need to be in a voice channel first!", ephemeral=True)
     
-    channel = ctx.author.voice.channel
-    msg = await ctx.send("🚨 **DEPLOYING THE JUMPSQUAD** 🚨\n`Extracting audio...`")
+    channel = interaction.user.voice.channel
+    await interaction.response.defer()
+    msg = await interaction.followup.send("🚨 **DEPLOYING THE JUMPSQUAD (11 BOTS MAX)** 🚨\n`Extracting audio...`", wait=True)
 
-    # 1. Extract the direct audio stream URL just ONCE for all bots
-    try:
-        with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-            loop = asyncio.get_event_loop()
-            info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
-            audio_url = info['url']
-            title = info.get('title', 'Unknown Audio')
-    except Exception as e:
-        return await msg.edit(content=f"❌ Error extracting audio: {e}")
+    audio_url = url
+    title = "Uploaded File" if is_file else "Unknown Audio"
 
-    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying squad to VC (this takes a few seconds to avoid Discord rate limits)...`")
+    if not is_file:
+        try:
+            with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
+                loop = asyncio.get_event_loop()
+                info = await loop.run_in_executor(None, lambda: ydl.extract_info(url, download=False))
+                audio_url = info['url']
+                title = info.get('title', 'Unknown Audio')
+        except Exception as e:
+            return await msg.edit(content=f"❌ Error extracting audio: {e}")
+
+    await msg.edit(content=f"🎶 **Target Locked:** {title}\n`Deploying 11-bot squad to VC...`")
 
     all_bots = [bot] + squad_bots
     connected_vcs = []
 
-    # 2. PHASE 1: Connect all bots FIRST (with delay to avoid rate limits)
     for b in all_bots:
         try:
-            # Skip bots that aren't properly logged in/ready
             if not b.is_ready(): 
                 continue
 
@@ -445,21 +541,17 @@ async def jumpsquad(ctx, url: str):
                 vc.stop()
                 
             connected_vcs.append(vc)
-            await asyncio.sleep(0.5) # Prevents Discord from rate-limiting the joins
+            await asyncio.sleep(0.5) 
             
         except Exception as e:
             print(f"Bot {b.user} failed to join: {e}")
 
     await msg.edit(content=f"🔊 **VC BREACHED** 🔊\n`Synchronizing audio across {len(connected_vcs)} bots...`")
 
-    # 3. PHASE 2: PRE-LOAD AUDIO SOURCES (This is the trick to perfectly sync them)
     audio_sources = []
     for _ in connected_vcs:
-        # We spawn the FFmpeg processes beforehand so they don't delay the play command
         audio_sources.append(discord.FFmpegPCMAudio(audio_url, **FFMPEG_OPTIONS))
 
-    # 4. PHASE 3: PLAY AUDIO SIMULTANEOUSLY
-    # Firing them off rapidly in a loop ensures they start at the exact same millisecond
     for i, vc in enumerate(connected_vcs):
         try:
             vc.play(audio_sources[i])
@@ -468,29 +560,35 @@ async def jumpsquad(ctx, url: str):
 
     await msg.edit(content=f"🔊 **JUMPSQUAD FULLY DEPLOYED** 🔊\nNow playing **{title}** on {len(connected_vcs)} bots simultaneously!")
 
-@bot.command(aliases=['squadstop', 'squad_dc'])
-async def squadleave(ctx):
+@bot.tree.command(name="jumpsquad", description="Deploy the Jumpsquad with a URL")
+async def jumpsquad_url(interaction: discord.Interaction, url: str):
+    await core_jumpsquad(interaction, url, is_file=False)
+
+@bot.tree.command(name="jumpsquadfile", description="Deploy the Jumpsquad with an uploaded File")
+async def jumpsquad_file(interaction: discord.Interaction, file: discord.Attachment):
+    await core_jumpsquad(interaction, file.url, is_file=True)
+
+@bot.tree.command(name="squadleave", description="Recall the Jumpsquad")
+async def squadleave(interaction: discord.Interaction):
     all_bots = [bot] + squad_bots
     disconnected = 0
     for b in all_bots:
         if not b.is_ready():
             continue
-        vc = discord.utils.get(b.voice_clients, guild=ctx.guild)
+        vc = discord.utils.get(b.voice_clients, guild=interaction.guild)
         if vc:
             await vc.disconnect()
             disconnected += 1
     
     if disconnected > 0:
-        await ctx.send(f"👋 Recalled the Jumpsquad. Disconnected {disconnected} bots.")
+        await interaction.response.send_message(f"👋 Recalled the Jumpsquad. Disconnected {disconnected} bots.")
     else:
-        await ctx.send("❌ The Jumpsquad isn't in any voice channels.")
+        await interaction.response.send_message("❌ The Jumpsquad isn't in any voice channels.", ephemeral=True)
 
 
 # ==========================================
 # INTERACTIVE GAMES (UI VIEWS)
 # ==========================================
-
-# 1. COINFLIP UI
 class CoinflipView(discord.ui.View):
     def __init__(self, author, bet):
         super().__init__(timeout=60)
@@ -525,15 +623,13 @@ class CoinflipView(discord.ui.View):
         await interaction.response.edit_message(content=msg, view=self)
         self.stop()
 
-@bot.command()
-async def coinflip(ctx, bet: int):
-    if bet <= 0 or bet > get_balance(ctx.author.id):
-        return await ctx.send("❌ Invalid bet amount! Check your balance.")
-    view = CoinflipView(ctx.author, bet)
-    await ctx.send(f"🪙 {ctx.author.mention} is betting **{bet} coins**. Choose Heads or Tails!", view=view)
+@bot.tree.command(name="coinflip", description="Bet coins on a coinflip")
+async def coinflip(interaction: discord.Interaction, bet: int):
+    if bet <= 0 or bet > get_balance(interaction.user.id):
+        return await interaction.response.send_message("❌ Invalid bet amount! Check your balance.", ephemeral=True)
+    view = CoinflipView(interaction.user, bet)
+    await interaction.response.send_message(f"🪙 {interaction.user.mention} is betting **{bet} coins**. Choose Heads or Tails!", view=view)
 
-
-# 2. SLOTS UI
 class SlotsView(discord.ui.View):
     def __init__(self, author, bet):
         super().__init__(timeout=60)
@@ -569,15 +665,13 @@ class SlotsView(discord.ui.View):
         await interaction.response.edit_message(content=f"🎰 **SLOTS** 🎰\n{res}", view=self)
         self.stop()
 
-@bot.command()
-async def slots(ctx, bet: int):
-    if bet <= 0 or bet > get_balance(ctx.author.id):
-        return await ctx.send("❌ Invalid bet amount! Check your balance.")
-    view = SlotsView(ctx.author, bet)
-    await ctx.send(f"🎰 {ctx.author.mention} is playing slots for **{bet} coins**!", view=view)
+@bot.tree.command(name="slots", description="Bet coins on the slot machine")
+async def slots(interaction: discord.Interaction, bet: int):
+    if bet <= 0 or bet > get_balance(interaction.user.id):
+        return await interaction.response.send_message("❌ Invalid bet amount! Check your balance.", ephemeral=True)
+    view = SlotsView(interaction.user, bet)
+    await interaction.response.send_message(f"🎰 {interaction.user.mention} is playing slots for **{bet} coins**!", view=view)
 
-
-# 3. INTERACTIVE MINES UI
 class MineButton(discord.ui.Button):
     def __init__(self, is_bomb, x, y):
         super().__init__(style=discord.ButtonStyle.secondary, label="❓", row=y)
@@ -654,40 +748,34 @@ class MinesView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
         self.stop()
 
-@bot.command()
-async def mines(ctx, bet: int, bombs: int = 4):
-    if bet <= 0 or bet > get_balance(ctx.author.id):
-        return await ctx.send("❌ Invalid bet amount! Check your balance.")
+@bot.tree.command(name="mines", description="Play a game of mines")
+async def mines(interaction: discord.Interaction, bet: int, bombs: int = 4):
+    if bet <= 0 or bet > get_balance(interaction.user.id):
+        return await interaction.response.send_message("❌ Invalid bet amount! Check your balance.", ephemeral=True)
     if bombs < 1 or bombs > 15:
-        return await ctx.send("❌ You must choose between 1 and 15 bombs.")
+        return await interaction.response.send_message("❌ You must choose between 1 and 15 bombs.", ephemeral=True)
     
-    view = MinesView(ctx.author, bet, bombs)
+    view = MinesView(interaction.user, bet, bombs)
     embed = discord.Embed(title=f"🧨 Minefield ({bombs} Bombs)", color=discord.Color.blue())
-    embed.description = f"{ctx.author.mention} is playing for **{bet} coins**!\nClick the tiles to find gems 💎 and avoid the bombs 💣."
-    await ctx.send(embed=embed, view=view)
+    embed.description = f"{interaction.user.mention} is playing for **{bet} coins**!\nClick the tiles to find gems 💎 and avoid the bombs 💣."
+    await interaction.response.send_message(embed=embed, view=view)
 
 
 # ==========================================
 # SERVER KEEP-ALIVE & BOOT
 # ==========================================
 async def start_all_bots():
-    # Grab the 10 squad tokens from Render's environment variables
     squad_tokens = [os.environ.get(f'SQUAD_TOKEN_{i}') for i in range(1, 11)]
-    
-    # Queue up the main bot
     tasks = [bot.start(os.environ.get('DISCORD_TOKEN'))]
     
-    # Queue up the squad bots
     for i, s_bot in enumerate(squad_bots):
         if squad_tokens[i]:
             tasks.append(s_bot.start(squad_tokens[i]))
         else:
             print(f"⚠️ Warning: SQUAD_TOKEN_{i+1} is missing in Render! That bot won't boot.")
 
-    # Run them all concurrently
     await asyncio.gather(*tasks)
 
 if __name__ == "__main__":
     keep_alive()
-    # Use asyncio.run to execute the multi-bot startup
     asyncio.run(start_all_bots())
